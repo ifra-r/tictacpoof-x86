@@ -1,0 +1,701 @@
+     1                                  [org 0x100]
+     2 00000000 EB2E                        jmp start 
+     3                                  
+     4                                  ; blocks in diff colors
+     5                                              red: equ 0x04DB  
+     6                                              black: equ 0x70DB
+     7                                              white: equ 0x07DB 
+     8                                              green: equ 0x02DB
+     9                                  ; postions:
+    10 00000002 6401                                start_grid: dw 356                                                         
+    11                                              ; box pos , isOccupied? 0 -> empty, 1 -> cross, 2 ->circle
+    12 00000004 6001                                box1: dw 352  
+    13 00000006 00                                        db 0x0        
+    14 00000007 7A01                                box2: dw 378  
+    15 00000009 00                                        db 0x0 
+    16 0000000A 9401                                box3: dw 404  
+    17 0000000C 00                                        db 0x0 
+    18 0000000D C005                                box4: dw 1472 
+    19 0000000F 00                                        db 0x0
+    20 00000010 DA05                                box5: dw 1498 
+    21 00000012 00                                        db 0x0
+    22 00000013 F405                                box6: dw 1524 
+    23 00000015 00                                        db 0x0
+    24 00000016 220A                                box7: dw 2594 
+    25 00000018 00                                        db 0x0
+    26 00000019 3C0A                                box8: dw 2620 
+    27 0000001B 00                                        db 0x0
+    28 0000001C 560A                                box9: dw 2646 
+    29 0000001E 00                                        db 0x0
+    30                                  
+    31 0000001F 0000                    recentCicle: dw 0x0         ; pos val 
+    32 00000021 0000                    recentCross: dw 0x0         ; pos val
+    33 00000023 0000                    recentCrossBox: dw 0x0      ; stores address of the box structure
+    34 00000025 0000                    recentCicleBox: dw 0x0      ; stores address of the box structure
+    35 00000027 0000                    tcircle: dw 0x0             ; total marked boxes on screen by player
+    36 00000029 0000                    tcross: dw 0x0              ; total marked boxes on screen by player
+    37                                  
+    38 0000002B 00                      turn: db 0      ; 1 -> cross , 2 -> circle
+    39 0000002C 00000000                oldIsr: dd 0x0   
+    40                                  
+    41                                  start: 
+    42 00000030 E89E03                          call clrscr
+    43 00000033 E81804                          call draw_grid
+    44 00000036 C706[2B00]0100                  mov word [turn], 1          ; set turn
+    45                                  
+    46 0000003C E85703                          call set_Isr
+    47                                          infloop:    
+    48 0000003F B400                                        mov ah, 0
+    49 00000041 CD16                                        int 0x16            ; get keystroke in al
+    50                                  
+    51 00000043 3C1B                                        cmp al, 27          ; cmp it with escape key code           ;  ;0x01        ; 0x11B ??? 
+    52 00000045 75F8                                        jne infloop
+    53                                  
+    54                                          ;restore oldisr at its position (unhookin interrupt)
+    55                                                      save_oldisr_and_end_prog:
+    56 00000047 A1[2C00]                                                mov ax, [oldIsr]
+    57 0000004A 8B1E[2E00]                                              mov bx, [oldIsr+2]
+    58                                  
+    59 0000004E FA                                                      cli
+    60 0000004F 26A32400                                                mov [es:9*4], ax
+    61 00000053 26891E2600                                              mov [es:9*4+2], bx
+    62 00000058 FB                                                      sti
+    63                                  
+    64                                                      terminate_prog:
+    65 00000059 B8004C                                              mov ax, 0x4c00
+    66 0000005C CD21                                                int 0x21
+    67                                  is_draw:
+    68                                      ; rec res, doesnt clean it
+    69 0000005E 55                          push bp
+    70 0000005F 89E5                        mov bp, sp 
+    71 00000061 60                          pusha
+    72                                  
+    73 00000062 BE[0600]                    mov si, box1+2
+    74                                  
+    75 00000065 B90900                      mov cx, 9
+    76                                      here1:
+    77 00000068 8A1C                            mov bl, byte [si]
+    78 0000006A 80FB00                          cmp bl, 0
+    79 0000006D 740C                            je false_draw
+    80                                  
+    81 0000006F 83C603                          add si, 3
+    82 00000072 E2F4                            loop here1
+    83                                  
+    84 00000074 C746040100                  mov word [bp+4], 0x1        ;ret true
+    85 00000079 EB05                        jmp exit_draw
+    86                                  
+    87                                      false_draw:
+    88 0000007B C746040000                      mov word [bp+4], 0x0
+    89                                  
+    90                                      exit_draw:
+    91 00000080 61                          popa
+    92 00000081 5D                          pop bp
+    93 00000082 C3                          ret
+    94                                  handle_input:
+    95                                      ;rec box address
+    96 00000083 55                          push bp
+    97 00000084 89E5                        mov bp, sp
+    98 00000086 60                          pusha
+    99                                  
+   100 00000087 E86200                      call lim_exceed
+   101                                  
+   102 0000008A 8B7604                      mov si, [bp+4]      ; box address
+   103 0000008D 807C0200                    cmp byte [si+2], 0x0 
+   104 00000091 7402                                    je not_occupied
+   105                                                  ; mov word [es:0], red
+   106 00000093 EB52                                    jmp exit_handle_input
+   107                                  
+   108                                      not_occupied:
+   109 00000095 803E[2B00]01                    cmp byte [turn], 0x1
+   110 0000009A 7523                            jne circle_turn
+   111                                  
+   112                                          cross_turn:
+   113 0000009C 68DB04                                  push red
+   114 0000009F 68[EE03]                                push cross
+   115 000000A2 FF34                                    push word [si]
+   116 000000A4 E86B03                                  call draw_symbol
+   117 000000A7 C6440201                                mov byte [si+2], 0x1  ; for cross  === occupied
+   118                                  
+   119 000000AB 8B1C                                    mov bx, [si]
+   120 000000AD 891E[2100]                              mov word [recentCross], bx      ; save position
+   121 000000B1 8936[2300]                              mov word [recentCrossBox], si   ; save box address
+   122 000000B5 8306[2900]01                            add word [tcross], 1 ; inc count of crossrs on screen
+   123                                  
+   124 000000BA E80003                                  call change_turn
+   125 000000BD EB28                                    jmp exit_handle_input
+   126                                  
+   127                                          circle_turn:
+   128 000000BF 803E[2B00]02                        cmp byte [turn], 0x2
+   129 000000C4 7521                                jne exit_handle_input
+   130                                  
+   131 000000C6 68DB02                                  push green
+   132 000000C9 68[0604]                                push circle
+   133 000000CC FF34                                    push word [si]
+   134 000000CE E84103                                  call draw_symbol
+   135 000000D1 C6440202                                mov byte [si+2], 0x2 ;for circle
+   136                                  
+   137 000000D5 8B1C                                    mov bx, [si]
+   138 000000D7 891E[1F00]                              mov word [recentCicle], bx      ; save position
+   139 000000DB 8936[2500]                              mov word [recentCicleBox], si   ; save box address
+   140 000000DF 8306[2700]01                            add word [tcircle], 1 
+   141                                  
+   142 000000E4 E8D602                                  call change_turn
+   143                                      
+   144                                      exit_handle_input:
+   145 000000E7 61                          popa
+   146 000000E8 5D                          pop bp
+   147 000000E9 C20200                      ret 2
+   148                                  lim_exceed: 
+   149 000000EC 60                          pusha
+   150                                  
+   151 000000ED 803E[2B00]01                cmp byte [turn], 0x1
+   152 000000F2 7526                            jne circle_lim_check
+   153                                  
+   154                                          cross_lim_check: 
+   155                                                  ; check if 3 box filled
+   156 000000F4 833E[2900]03                            cmp word [tcross], 3
+   157 000000F9 751F                                    jne circle_lim_check
+   158                                  
+   159                                                      ; remove the oldest cross
+   160 000000FB 8B36[2300]                                  mov si, word [recentCrossBox]   ; get the box address
+   161 000000FF 83FE00                                      cmp si, 0                       ; check if we have a recent box
+   162 00000102 7416                                        je circle_lim_check
+   163                                  
+   164                                                      ; remove cross recemt ome
+   165 00000104 68DB07                                              push white
+   166 00000107 68[FA03]                                            push empty
+   167 0000010A FF34                                                push word [si]   ; recenr bpx 
+   168 0000010C E80303                                              call draw_symbol ; call Undraw_symbol
+   169 0000010F C6440200                                            mov byte [si+2], 0x0   ; is occupied: null
+   170 00000113 832E[2900]01                                        sub word [tcross], 1   ; decrease count
+   171 00000118 EB2B                                                jmp exit_lim
+   172                                  
+   173                                          circle_lim_check:
+   174 0000011A 803E[2B00]02                        cmp byte [turn], 0x2
+   175 0000011F 7524                                jne exit_lim  
+   176                                  
+   177                                                  ; check if 3 box filled
+   178 00000121 833E[2700]03                                    cmp word [tcircle], 3
+   179 00000126 751D                                            jne exit_lim
+   180                                  
+   181                                                              ; remove the oldest circle
+   182 00000128 8B36[2500]                                              mov si, word [recentCicleBox]   ; get the box address
+   183 0000012C 83FE00                                                  cmp si, 0                       ; check if we have a recent box
+   184 0000012F 7414                                                    je exit_lim
+   185                                  
+   186                                                              ; remove cross recemt ome
+   187 00000131 68DB07                                                      push white
+   188 00000134 68[FA03]                                                    push empty
+   189 00000137 FF34                                                        push word [si]  ; recenr bpx 
+   190 00000139 E8D602                                                      call draw_symbol ; Undraw_symbol 
+   191 0000013C C6440200                                                    mov byte [si+2], 0x0   ; mark as unoccupied
+   192 00000140 832E[2700]01                                                sub word [tcircle], 1   ; decrease count
+   193                                  
+   194                                      exit_lim:
+   195 00000145 61                              popa
+   196                                          ; pop bp
+   197 00000146 C3                              ret
+   198                                  myisr:
+   199 00000147 60                          pusha
+   200                                  
+   201 00000148 BA6000                      mov dx, 0x60                ; to read word 
+   202 0000014B EC                          in al, dx
+   203 0000014C 3C02                        cmp al, 0x02
+   204                                  
+   205 0000014E 6800B8                      push 0xb800
+   206 00000151 07                          pop es 
+   207                                  
+   208                                      ; Check if it's a key release (break code)
+   209 00000152 A880                                    test al, 0x80
+   210 00000154 0F859800                                jnz exit   ; If highest bit is set, it's a break code, ignore it
+   211                                  
+   212                                      one:
+   213 00000158 3C02                            cmp al, 0x02           ;scancode cmp
+   214 0000015A 7508                            jne two
+   215                                  
+   216 0000015C 68[0400]                        push word box1
+   217 0000015F E821FF                          call handle_input
+   218 00000162 EB60                            jmp checkWinStatus
+   219                                   
+   220                                      two:
+   221 00000164 3C03                            cmp al, 3
+   222 00000166 7508                            jne three
+   223                                   
+   224 00000168 68[0700]                        push word box2
+   225 0000016B E815FF                          call handle_input
+   226 0000016E EB54                            jmp checkWinStatus
+   227                                      three:
+   228 00000170 3C04                            cmp al, 4
+   229 00000172 7508                            jne four
+   230                                   
+   231 00000174 68[0A00]                        push word box3
+   232 00000177 E809FF                          call handle_input
+   233 0000017A EB48                            jmp checkWinStatus
+   234                                      four:
+   235 0000017C 3C05                            cmp al, 5
+   236 0000017E 7508                            jne five
+   237                                   
+   238 00000180 68[0D00]                        push word box4
+   239 00000183 E8FDFE                          call handle_input
+   240 00000186 EB3C                            jmp checkWinStatus
+   241                                      five:
+   242 00000188 3C06                            cmp al, 6
+   243 0000018A 7508                            jne six
+   244                                  
+   245 0000018C 68[1000]                        push word box5
+   246 0000018F E8F1FE                          call handle_input
+   247 00000192 EB30                            jmp checkWinStatus
+   248                                      six:
+   249 00000194 3C07                            cmp al, 7
+   250 00000196 7508                            jne seven
+   251                                  
+   252 00000198 68[1300]                        push word box6
+   253 0000019B E8E5FE                          call handle_input
+   254 0000019E EB24                            jmp checkWinStatus
+   255                                      seven:
+   256 000001A0 3C08                            cmp al, 8
+   257 000001A2 7508                            jne eight
+   258                                  
+   259 000001A4 68[1600]                        push word box7
+   260 000001A7 E8D9FE                          call handle_input
+   261 000001AA EB18                            jmp checkWinStatus
+   262                                      eight:
+   263 000001AC 3C09                            cmp al, 9
+   264 000001AE 7508                            jne nine
+   265                                  
+   266 000001B0 68[1900]                        push word box8
+   267 000001B3 E8CDFE                          call handle_input
+   268 000001B6 EB0C                            jmp checkWinStatus
+   269                                      nine:
+   270 000001B8 3C0A                            cmp al, 0xA
+   271 000001BA 7508                            jne checkWinStatus
+   272                                  
+   273 000001BC 68[1C00]                        push word box9
+   274 000001BF E8C1FE                          call handle_input
+   275 000001C2 EB00                            jmp checkWinStatus
+   276                                  
+   277                                      checkWinStatus:
+   278 000001C4 6A00                            push 0x0
+   279 000001C6 E8B200                          call IsWon
+   280 000001C9 58                              pop ax
+   281 000001CA 83F800                          cmp ax, 0
+   282 000001CD 740B                            je check_draw_status
+   283                                          won:
+   284 000001CF E82800                                  call win_display
+   285                                  
+   286 000001D2 B020                                    mov al, 0x20
+   287 000001D4 E620                                    out 0x20, al
+   288 000001D6 61                                      popa
+   289                                                  ; jmp far [cs:oldIsr]  
+   290 000001D7 E96DFE                                  jmp save_oldisr_and_end_prog        ; end game
+   291                                  
+   292                                      check_draw_status:
+   293 000001DA 6A00                            push 0x0
+   294 000001DC E87FFE                          call is_draw
+   295 000001DF 58                              pop ax        
+   296 000001E0 83F800                          cmp ax, 0
+   297 000001E3 740B                            je exit
+   298                                  
+   299                                          draww:
+   300 000001E5 E84C00                                  call draw_display
+   301                                  
+   302 000001E8 B020                                    mov al, 0x20
+   303 000001EA E620                                    out 0x20, al
+   304 000001EC 61                                      popa
+   305                                                  ; jmp far [cs:oldIsr]  
+   306 000001ED E957FE                                  jmp save_oldisr_and_end_prog        ; end game
+   307                                  
+   308                                  
+   309                                      exit:
+   310                                          ; Send EOI to PIC
+   311 000001F0 B020                                    mov al, 0x20
+   312 000001F2 E620                                    out 0x20, al
+   313                                  
+   314 000001F4 61                          popa
+   315 000001F5 2EFF2E[2C00]                jmp far [cs:oldIsr]          ; giving control to org ISR (it will clean up stack so no need of iret)
+   316                                  win_display:
+   317 000001FA 60                          pusha
+   318 000001FB 6800B8                      push 0xb800
+   319 000001FE 07                          pop es
+   320                                  
+   321 000001FF 26C606980057                mov byte [es:152], 'W' 
+   322 00000205 26C6069A004F                mov byte [es:154], 'O' 
+   323 0000020B 26C6069C004E                mov byte [es:156], 'N' 
+   324 00000211 26C6069E0021                mov byte [es:158], '!' 
+   325                                  
+   326 00000217 8A1E[2B00]                  mov bl, byte [turn]
+   327 0000021B 30FF                        xor bh, bh
+   328 0000021D 83FB01                      cmp bx, 1
+   329 00000220 7409                        je crossWon
+   330                                  
+   331                                      cicleWon:
+   332 00000222 26C7069400DB04                      mov word [es:148], red
+   333 00000229 EB07                                jmp exit_winDisplay
+   334                                  
+   335                                      crossWon:
+   336 0000022B 26C7069400DB02                      mov word [es:148], green
+   337                                  
+   338                                      exit_winDisplay:
+   339 00000232 61                              popa
+   340 00000233 C3                              ret
+   341                                  draw_display:
+   342 00000234 60                          pusha
+   343 00000235 6800B8                      push 0xB800
+   344 00000238 07                          pop es
+   345 00000239 26C606980044                mov byte [es:152], 'D' 
+   346 0000023F 26C6069A0052                mov byte [es:154], 'R' 
+   347 00000245 26C6069C0041                mov byte [es:156], 'A' 
+   348 0000024B 26C6069E0057                mov byte [es:158], 'W' 
+   349 00000251 61                          popa
+   350 00000252 C3                          ret
+   351                                  check_equal_and_not_empty:
+   352                                                                  ; Stack k khoobsurat halaat: Res, Num , Num, Num, Ip, Bp
+   353                                      ; check if all three are equal and non zero
+   354 00000253 55                          push bp
+   355 00000254 89E5                        mov bp, sp 
+   356 00000256 60                          pusha
+   357                                  
+   358 00000257 8B4604                      mov ax, [bp+4]       ; ax = num1
+   359 0000025A 3B4606                      cmp ax, [bp+6]       ; compare num1 with num2
+   360 0000025D 7512                        jne false
+   361                                  
+   362 0000025F 3B4608                      cmp ax, [bp+8]      ; compare num1 with num3
+   363 00000262 750D                        jne false
+   364                                  
+   365                                      ; All equal
+   366                                          ; none zero?
+   367 00000264 837E0800                            cmp word [bp+8], 0
+   368 00000268 7407                                je false
+   369                                  
+   370 0000026A C7460A0100                          mov word [bp+10], 0x1     ; store 1 at result
+   371 0000026F EB05                                jmp done
+   372                                  
+   373                                      false:
+   374 00000271 C7460A0000                      mov word [bp+10], 0     ; store 0 at result
+   375                                  
+   376                                      done:
+   377 00000276 61                              popa
+   378 00000277 5D                              pop bp
+   379 00000278 C20600                          ret 6                ; pop 3 params (6 bytes), leave result ptr on stack
+   380                                  IsWon:     ; Rec result, doesn't clean it
+   381 0000027B 55                          push bp
+   382 0000027C 89E5                        mov bp, sp
+   383 0000027E 60                          pusha
+   384                                      
+   385                                      Row1:
+   386 0000027F 6A00                            push word 0x0
+   387 00000281 B700                            mov bh, 0
+   388 00000283 8A1E[0600]                      mov bl, byte [box1+2]
+   389 00000287 53                              push bx
+   390 00000288 B700                            mov bh, 0
+   391 0000028A 8A1E[0900]                      mov bl, byte [box2+2]
+   392 0000028E 53                              push bx
+   393 0000028F B700                            mov bh, 0
+   394 00000291 8A1E[0C00]                      mov bl, byte [box3+2]
+   395 00000295 53                              push bx
+   396 00000296 E8BAFF                          call check_equal_and_not_empty
+   397 00000299 58                              pop ax
+   398 0000029A 83F801                          cmp ax, 1
+   399 0000029D 0F84ED00                        je retTrue
+   400                                          
+   401                                      Row2:
+   402 000002A1 6A00                            push word 0x0
+   403 000002A3 B700                            mov bh, 0
+   404 000002A5 8A1E[0F00]                      mov bl, byte [box4+2]
+   405 000002A9 53                              push bx
+   406 000002AA B700                            mov bh, 0
+   407 000002AC 8A1E[1200]                      mov bl, byte [box5+2]
+   408 000002B0 53                              push bx
+   409 000002B1 B700                            mov bh, 0
+   410 000002B3 8A1E[1500]                      mov bl, byte [box6+2]
+   411 000002B7 53                              push bx
+   412 000002B8 E898FF                          call check_equal_and_not_empty
+   413 000002BB 58                              pop ax
+   414 000002BC 83F801                          cmp ax, 1
+   415 000002BF 0F84CB00                        je retTrue
+   416                                          
+   417                                      Row3:
+   418 000002C3 6A00                            push word 0x0
+   419 000002C5 B700                            mov bh, 0
+   420 000002C7 8A1E[1800]                      mov bl, byte [box7+2]
+   421 000002CB 53                              push bx
+   422 000002CC B700                            mov bh, 0
+   423 000002CE 8A1E[1B00]                      mov bl, byte [box8+2]
+   424 000002D2 53                              push bx
+   425 000002D3 B700                            mov bh, 0
+   426 000002D5 8A1E[1E00]                      mov bl, byte [box9+2]
+   427 000002D9 53                              push bx
+   428 000002DA E876FF                          call check_equal_and_not_empty
+   429 000002DD 58                              pop ax
+   430 000002DE 83F801                          cmp ax, 1
+   431 000002E1 0F84A900                        je retTrue
+   432                                          
+   433                                      Col1:
+   434 000002E5 6A00                            push word 0x0
+   435 000002E7 B700                            mov bh, 0
+   436 000002E9 8A1E[0600]                      mov bl, byte [box1+2]
+   437 000002ED 53                              push bx
+   438 000002EE B700                            mov bh, 0
+   439 000002F0 8A1E[0F00]                      mov bl, byte [box4+2]
+   440 000002F4 53                              push bx
+   441 000002F5 B700                            mov bh, 0
+   442 000002F7 8A1E[1800]                      mov bl, byte [box7+2]
+   443 000002FB 53                              push bx
+   444 000002FC E854FF                          call check_equal_and_not_empty
+   445 000002FF 58                              pop ax
+   446 00000300 83F801                          cmp ax, 1
+   447 00000303 0F848700                        je retTrue
+   448                                          
+   449                                      Col2:
+   450 00000307 6A00                            push word 0x0
+   451 00000309 B700                            mov bh, 0
+   452 0000030B 8A1E[0900]                      mov bl, byte [box2+2]
+   453 0000030F 53                              push bx
+   454 00000310 B700                            mov bh, 0
+   455 00000312 8A1E[1200]                      mov bl, byte [box5+2]
+   456 00000316 53                              push bx
+   457 00000317 B700                            mov bh, 0
+   458 00000319 8A1E[1B00]                      mov bl, byte [box8+2]
+   459 0000031D 53                              push bx
+   460 0000031E E832FF                          call check_equal_and_not_empty
+   461 00000321 58                              pop ax
+   462 00000322 83F801                          cmp ax, 1
+   463 00000325 7467                            je retTrue
+   464                                          
+   465                                      Col3:
+   466 00000327 6A00                            push word 0x0
+   467 00000329 B700                            mov bh, 0
+   468 0000032B 8A1E[0C00]                      mov bl, byte [box3+2]
+   469 0000032F 53                              push bx
+   470 00000330 B700                            mov bh, 0
+   471 00000332 8A1E[1500]                      mov bl, byte [box6+2]
+   472 00000336 53                              push bx
+   473 00000337 B700                            mov bh, 0
+   474 00000339 8A1E[1E00]                      mov bl, byte [box9+2]
+   475 0000033D 53                              push bx
+   476 0000033E E812FF                          call check_equal_and_not_empty
+   477 00000341 58                              pop ax
+   478 00000342 83F801                          cmp ax, 1
+   479 00000345 7447                            je retTrue
+   480                                          
+   481                                      Diag1:
+   482 00000347 6A00                            push word 0x0
+   483 00000349 B700                            mov bh, 0
+   484 0000034B 8A1E[0600]                      mov bl, byte [box1+2]
+   485 0000034F 53                              push bx
+   486 00000350 B700                            mov bh, 0
+   487 00000352 8A1E[1200]                      mov bl, byte [box5+2]
+   488 00000356 53                              push bx
+   489 00000357 B700                            mov bh, 0
+   490 00000359 8A1E[1E00]                      mov bl, byte [box9+2]
+   491 0000035D 53                              push bx
+   492 0000035E E8F2FE                          call check_equal_and_not_empty
+   493 00000361 58                              pop ax
+   494 00000362 83F801                          cmp ax, 1
+   495 00000365 7427                            je retTrue
+   496                                          
+   497                                      Diag2:
+   498 00000367 6A00                            push word 0x0
+   499 00000369 B700                            mov bh, 0
+   500 0000036B 8A1E[0C00]                      mov bl, byte [box3+2]
+   501 0000036F 53                              push bx
+   502 00000370 B700                            mov bh, 0
+   503 00000372 8A1E[1200]                      mov bl, byte [box5+2]
+   504 00000376 53                              push bx
+   505 00000377 B700                            mov bh, 0
+   506 00000379 8A1E[1800]                      mov bl, byte [box7+2]
+   507 0000037D 53                              push bx
+   508 0000037E E8D2FE                          call check_equal_and_not_empty
+   509 00000381 58                              pop ax
+   510 00000382 83F801                          cmp ax, 1
+   511 00000385 7407                            je retTrue
+   512                                          
+   513 00000387 C746040000                  mov word [bp+4], 0x0   ; ret false as res
+   514 0000038C EB05                        jmp exitWon
+   515                                      
+   516                                      retTrue:
+   517 0000038E C746040100                      mov word [bp+4], 0x1
+   518                                          
+   519                                      exitWon:
+   520 00000393 61                              popa
+   521 00000394 5D                              pop bp
+   522 00000395 C3                              ret  ; don't remove res from stack 
+   523                                  set_Isr:
+   524 00000396 06                          push es
+   525 00000397 50                          push ax
+   526 00000398 53                          push bx
+   527 00000399 31C0                        xor ax, ax
+   528 0000039B 8EC0                        mov es, ax
+   529 0000039D 26A12400                    mov ax, [es:9*4]
+   530 000003A1 A3[2C00]                    mov [oldIsr], ax
+   531 000003A4 26A12600                    mov ax, [es:9*4+2]
+   532 000003A8 A3[2E00]                    mov [oldIsr+2], ax          ; oldisr saved
+   533 000003AB FA                          cli                         ; disabling interrupts to avoid program crash 
+   534 000003AC 26C7062400[4701]            mov word [es:9*4], myisr
+   535 000003B3 268C0E2600                  mov word [es:9*4+2], cs
+   536 000003B8 FB                          sti                         ; interrupts enabled agaim
+   537 000003B9 5B                          pop bx
+   538 000003BA 58                          pop ax
+   539 000003BB 07                          pop es
+   540 000003BC C3                          ret
+   541                                  change_turn: 
+   542 000003BD 803E[2B00]01                cmp byte [turn], 1
+   543 000003C2 7507                            jne set_to_one
+   544                                  
+   545                                      ; If it was 1, set to 2
+   546 000003C4 C606[2B00]02                mov byte [turn], 2
+   547 000003C9 EB05                        jmp done_change
+   548                                  
+   549                                      set_to_one:
+   550 000003CB C606[2B00]01                    mov byte [turn], 1   
+   551                                  
+   552                                      done_change:
+   553 000003D0 C3                              ret  
+   554                                  clrscr: 
+   555 000003D1 50                          push ax
+   556 000003D2 06                          push es
+   557 000003D3 57                          push di
+   558                                  
+   559 000003D4 B800B8                      mov ax, 0xb800
+   560 000003D7 8EC0                        mov es, ax
+   561 000003D9 BF0000                      mov di, 0                     ;location indexer
+   562                                  
+   563                                      nextposition:
+   564 000003DC 26C7052007                      mov word[es:di], 0x0720   ;black ;space  character
+   565 000003E1 83C702                          add di, 2                 ;next cell
+   566 000003E4 81FFA00F                        cmp di, 4000              ;total cells - 80*25= 2000 (2 byte cells) so 4000
+   567 000003E8 75F2                            jnz nextposition
+   568                                  
+   569 000003EA 5F                          pop di
+   570 000003EB 07                          pop es
+   571 000003EC 58                          pop ax
+   572 000003ED C3                          ret
+   573                                  cross:
+   574 000003EE 0000                            dw 0000000000000000b,
+   575 000003F0 4004                            dw 0000010001000000b,
+   576 000003F2 8002                            dw 0000001010000000b,
+   577 000003F4 0001                            dw 0000000100000000b,
+   578 000003F6 8002                            dw 0000001010000000b,
+   579 000003F8 4004                            dw 0000010001000000b
+   580                                  empty:
+   581 000003FA 0000                            dw 0000000000000000b,
+   582 000003FC C007                            dw 0000011111000000b,
+   583 000003FE C006                            dw 0000011011000000b,
+   584 00000400 4005                            dw 0000010101000000b,
+   585 00000402 8003                            dw 0000001110000000b,
+   586 00000404 4004                            dw 0000010001000000b 
+   587                                  circle:
+   588 00000406 0000                            dw 0000000000000000b,
+   589 00000408 8003                            dw 0000001110000000b,
+   590 0000040A 4004                            dw 0000010001000000b,
+   591 0000040C 4004                            dw 0000010001000000b,
+   592 0000040E 8003                            dw 0000001110000000b,
+   593 00000410 0000                            dw 0000000000000000b
+   594                                  draw_symbol:
+   595                                      ;rec attribyte wpprd,  symbol address and pos (to print at)
+   596                                  
+   597                                      ; sub routine setup
+   598 00000412 55                                  push bp
+   599 00000413 89E5                                mov bp, sp
+   600 00000415 60                                  pusha
+   601                                  
+   602                                      ; using bits
+   603 00000416 6800B8                      push 0xb800
+   604 00000419 07                          pop es
+   605 0000041A B90600                      mov cx, 6               ; totak 6 rows
+   606 0000041D 31FF                        xor di, di
+   607 0000041F 8B5E06                      mov bx, [bp+6]          ; address of symbol
+   608 00000422 8B7604                      mov si, [bp+4]          ; pos to print cross at
+   609 00000425 8B4608                      mov ax, [bp+8]
+   610                                      outerloop:
+   611 00000428 51                              push cx
+   612 00000429 B91000                          mov cx, 16                      ; deal with one word
+   613 0000042C 8B11                            mov dx, word  [bx+di]           ; [circle+di]
+   614 0000042E 56                              push si
+   615 0000042F F8                              CLC
+   616                                          here:
+   617 00000430 D1E2                                shl dx, 1
+   618 00000432 7202                                jc draw_cross_here                
+   619 00000434 EB03                                    jmp updates
+   620                                  
+   621                                              draw_cross_here:
+   622 00000436 268904                                  mov word [es:si], ax ;red   ;_dot         
+   623                                              updates:
+   624 00000439 83C602                              add si, 2
+   625 0000043C E2F2                                loop here
+   626                                  
+   627 0000043E 5E                              pop si
+   628 0000043F 81C6A000                        add si, 160
+   629 00000443 59                              pop cx
+   630 00000444 83C702                          add di, 2          ;move to next word
+   631 00000447 E2DF                            loop outerloop
+   632                                  
+   633 00000449 61                          popa
+   634 0000044A 5D                          pop bp
+   635 0000044B C20600                      ret 6 
+   636                                  draw_grid:
+   637 0000044E 60                          pusha
+   638                                      ; set up es amd start index for printing 
+   639 0000044F 6800B8                              push 0xb800
+   640 00000452 07                                  pop es
+   641 00000453 8B36[0200]                          mov si, [start_grid]
+   642                                  
+   643 00000457 B90300                      mov cx, 3
+   644                                      outerloop2:
+   645 0000045A 51                              push cx 
+   646 0000045B 56                              push si
+   647 0000045C B90300                          mov cx, 3
+   648                                          innerloop2:
+   649 0000045F 56                                  push si
+   650 00000460 E80F00                              call draw_box
+   651                                              exit2:
+   652 00000463 83C61A                                  add si, 26   ; ADJUST ACC. HARDCORD!!!!!!!!!!!!
+   653 00000466 E2F7                                    loop innerloop2
+   654 00000468 5E                              pop si
+   655 00000469 59                              pop cx
+   656 0000046A 81C66004                        add si, 1120 ;960    ; ADJUST ACC. HARDCORD!!!!!!!!!!!! move down to draw bottom row bpx
+   657 0000046E E2EA                            loop outerloop2
+   658                                  
+   659 00000470 61                          popa
+   660 00000471 C3                          ret
+   661                                  
+   662                                  draw_box:
+   663                                      ; receives start index
+   664                                      ; sub routine setup
+   665 00000472 55                                  push bp
+   666 00000473 89E5                                mov bp, sp
+   667 00000475 60                                  pusha
+   668                                  
+   669                                      ; set es for printing
+   670 00000476 6800B8                              push 0xb800
+   671 00000479 07                                  pop es
+   672                                  
+   673                                      ; set environment for loop
+   674 0000047A B90600                              mov cx, 6
+   675 0000047D 8B7604                              mov si, [bp+4]  ; start index to print at
+   676                                  
+   677                                      ; 6 rows, 12 cols
+   678                                      outerloop1:
+   679 00000480 56                                  push si
+   680 00000481 51                                  push cx
+   681 00000482 89CA                                mov dx, cx      ; to use it as a row index in inner loop condition for boundaries
+   682 00000484 B90C00                              mov cx, 12
+   683                                  
+   684                                              innerloop1:
+   685                                                          not_boundary:
+   686 00000487 26C704DB07                                          mov word [es:si], white
+   687 0000048C EB00                                                jmp exit_loop1
+   688                                  
+   689                                                              exit_loop1:
+   690 0000048E 83C602                                                  add si, 2           ; move to next pos
+   691 00000491 E2F4                                            loop innerloop1
+   692                                  
+   693 00000493 59                                  pop cx
+   694 00000494 5E                                  pop si
+   695 00000495 81C6A000                            add si, 160
+   696 00000499 E2E5                                loop outerloop1   
+   697                                  
+   698 0000049B 61                          popa
+   699 0000049C 5D                          pop bp
+   700 0000049D C20200                      ret 2
+   701                                  
